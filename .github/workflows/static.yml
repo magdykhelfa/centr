@@ -3,6 +3,7 @@ name: Deploy Vite site to GitHub Pages
 on:
   push:
     branches: ["main"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,6 +12,9 @@ permissions:
 
 jobs:
   deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,8 +26,15 @@ jobs:
       - run: npm install
       - run: npm run build
 
-      - uses: actions/upload-pages-artifact@v3
+      # التعديل هنا: نرفع الملف ونسميه باسم فريد أو نعتمد على النسخة v4
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
           path: dist
 
-      - uses: actions/deploy-pages@v4
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+        with:
+          # نضمن إنه يدور على الـ artifact اللي لسه مرفوع حالا
+          timeout: 600000
