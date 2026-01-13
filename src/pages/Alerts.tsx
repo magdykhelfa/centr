@@ -1,153 +1,145 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Bell, Calendar, DollarSign, Clock, X, AlertTriangle, Wifi, WifiOff } from 'lucide-react';
-import { toast } from 'sonner';
+import { useEffect, useState } from "react";
+import { Bell, AlertTriangle, Calendar, CreditCard, UserX, Check, Trophy } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
+
+type AlertType = "absence" | "payment" | "session" | "exam";
+type Priority = "high" | "medium" | "low";
+type Alert = { id: string; type: AlertType; title: string; message: string; time: string; priority: Priority; read: boolean; };
+
+const iconMap = { absence: UserX, payment: CreditCard, session: Calendar, exam: Trophy };
+const priorityColors = { high: "border-r-4 border-r-destructive bg-destructive/5", medium: "border-r-4 border-r-warning bg-warning/5", low: "border-r-4 border-r-blue-500 bg-blue-50/30" };
 
 export default function Alerts() {
-  // القاعدة الثابتة: سحب الـ IP من صفحة العملاء
-  const currentIp = localStorage.getItem('server_ip') || '192.168.1.5';
-  const BASE_URL = `http://${currentIp}:3000`;
-
-  const [filter, setFilter] = useState('all');
-  const [alerts, setAlerts] = useState<any[]>([]);
-  const [isNet, setIsNet] = useState(false);
-
-  // وظيفة المزامنة لجلب أحدث البيانات من السيرفر قبل فحص التنبيهات
-  const syncAndCheck = useCallback(async () => {
-    try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 1500);
-      const res = await fetch(`${BASE_URL}/sync`, { signal: ctrl.signal });
-      clearTimeout(t);
-      if (res.ok) {
-        const full = await res.json();
-        localStorage.setItem('lawyer_cases', JSON.stringify(full.cases || []));
-        localStorage.setItem('lawyer_transactions', JSON.stringify(full.finance || []));
-        localStorage.setItem('lawyer_sessions', JSON.stringify(full.sessions || []));
-        localStorage.setItem('full_db', JSON.stringify(full));
-        setIsNet(true);
-      }
-    } catch { setIsNet(false); }
-
-    // قراءة البيانات المحدثة
-    const cases = JSON.parse(localStorage.getItem('lawyer_cases') || '[]');
-    const transactions = JSON.parse(localStorage.getItem('lawyer_transactions') || '[]');
-    const systemAlerts: any[] = [];
-    const today = new Date().toISOString().split('T')[0];
-
-    // 1. فحص الجلسات (من القضايا والجلسات المستقلة)
-    cases.forEach((c: any) => {
-      const sDate = c.nextSession || c.sessionDate;
-      if (sDate === today) {
-        systemAlerts.push({
-          id: `case-${c.id}`,
-          type: 'session',
-          title: '⚖️ جلسة اليوم الآن',
-          description: `قضية رقم: ${c.number || '---'} | محكمة: ${c.court || 'غير محدد'}`,
-          date: sDate,
-          time: c.time || '10:00',
-          priority: 'high'
-        });
-      } else if (!sDate && c.status === 'active') {
-        systemAlerts.push({
-          id: `warn-${c.id}`,
-          type: 'case',
-          title: '⚠️ قضية بدون تحديث',
-          description: `قضية رقم ${c.number || 'جديدة'} لم يتم تحديد موعد جلسة لها`,
-          priority: 'medium'
-        });
-      }
-    });
-
-    // 2. فحص المستحقات المترتبة
-    transactions.forEach((tx: any) => {
-      const remaining = parseFloat(tx.remaining || 0);
-      if (remaining > 0) {
-        systemAlerts.push({
-          id: `pay-${tx.id}`,
-          type: 'payment',
-          title: '💰 مستحقات مالية',
-          description: `العميل: ${tx.client} | متبقي عليه: ${remaining.toLocaleString()} ج.م`,
-          priority: 'high'
-        });
-      }
-    });
-
-    setAlerts(systemAlerts);
-  }, [BASE_URL]);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
 
   useEffect(() => {
-    syncAndCheck();
-    const interval = setInterval(() => syncAndCheck(), 15000); // تحديث التنبيهات كل 15 ثانية
-    return () => clearInterval(interval);
-  }, [syncAndCheck]);
+    // 1. سحب البيانات الخام من كل الأقسام
+    const students = JSON.parse(localStorage.getItem("students-data") || "[]");
+    const attendance = JSON.parse(localStorage.getItem("attendance-data") || "{}");
+    const exams = JSON.parse(localStorage.getItem("exams-data") || "[]");
+    const transactions = JSON.parse(localStorage.getItem("finance-transactions") || "[]");
+    const readAlerts = JSON.parse(localStorage.getItem("read-alerts-ids") || "[]");
 
-  const filtered = alerts.filter(a => filter === 'all' ? true : a.type === filter);
+    const liveAlerts: Alert[] = [];
+    const today = new Date().toLocaleDateString('en-CA');
+
+    // --- أ: تنبيهات الغياب (High Priority) ---
+    students.forEach((st: any) => {
+      const groupAtt = attendance[st.group] || {};
+      if (!groupAtt[st.id]) { // لو مش متسجل حضور
+        liveAlerts.push({
+          id: `abs-${st.id}-${today}`,
+          type: "absence",
+          title: "غياب طالب اليوم",
+          message: `الطالب ${st.name} غائب عن مجموعة ${st.group}`,
+          time: "اليوم",
+          priority: "high",
+          read: readAlerts.includes(`abs-${st.id}-${today}`)
+        });
+      }
+    });
+
+    // --- ب: تنبيهات المالية (Medium Priority) ---
+    const debtors = students.filter((st: any) => {
+      const stDebt = transactions.filter((t: any) => t.student === st.name && t.status === "partial").reduce((acc: number, t: any) => acc + (Number(t.amount) || 0), 0);
+      return stDebt > 0;
+    });
+    if (debtors.length > 0) {
+      liveAlerts.push({
+        id: `fin-${today}`,
+        type: "payment",
+        title: "تحصيل متأخرات",
+        message: `يوجد ${debtors.length} طلاب لديهم مبالغ مالية لم تسدد بعد`,
+        time: "تحديث لحظي",
+        priority: "medium",
+        read: readAlerts.includes(`fin-${today}`)
+      });
+    }
+
+    // --- ج: تنبيهات التفوق (Low/Info Priority) ---
+    exams.filter((ex: any) => ex.status === "graded").forEach((ex: any) => {
+      const tops = Object.entries(ex.grades || {}).filter(([_, grade]) => Number(grade) >= Number(ex.totalMarks));
+      if (tops.length > 0) {
+        liveAlerts.push({
+          id: `exam-${ex.id}`,
+          type: "exam",
+          title: "لوحة الشرف",
+          message: `${tops.length} طلاب قفلوا امتحان ${ex.subject} بمجموعة ${ex.group}`,
+          time: ex.date,
+          priority: "low",
+          read: readAlerts.includes(`exam-${ex.id}`)
+        });
+      }
+    });
+
+    setAlerts(liveAlerts.sort((a, b) => (a.read === b.read ? 0 : a.read ? 1 : -1)));
+  }, []);
+
+  const markAsRead = (id: string) => {
+    const readIds = JSON.parse(localStorage.getItem("read-alerts-ids") || "[]");
+    if (!readIds.includes(id)) {
+      const newReadIds = [...readIds, id];
+      localStorage.setItem("read-alerts-ids", JSON.stringify(newReadIds));
+      setAlerts(prev => prev.map(a => a.id === id ? { ...a, read: true } : a));
+    }
+  };
+
+  const markAllAsRead = () => {
+    const allIds = alerts.map(a => a.id);
+    localStorage.setItem("read-alerts-ids", JSON.stringify(allIds));
+    setAlerts(prev => prev.map(a => ({ ...a, read: true })));
+  };
 
   return (
     <div className="space-y-6 text-right" dir="rtl">
-      <div className="flex justify-between items-center bg-card p-6 rounded-2xl border-2 border-gold/20 shadow-sm">
+      <div className="flex items-center justify-between bg-white p-4 rounded-2xl shadow-sm border border-primary/10">
         <div>
-          <h1 className="text-2xl font-bold font-arabic text-navy-dark flex items-center gap-2">
-            مركز التنبيهات {isNet ? <Wifi className="w-5 h-5 text-success animate-pulse" /> : <WifiOff className="w-5 h-5 text-muted-foreground" />}
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {isNet ? `متصل بالخزينة الرئيسية: ${currentIp}` : 'شغال على آخر بيانات محفوظة محلياً'}
-          </p>
+          <h1 className="text-2xl font-black flex items-center gap-2 text-primary"><Bell className="w-6 h-6 animate-swing" /> التنبيهات الذكية</h1>
+          <p className="text-muted-foreground text-xs font-bold font-egyptian">تحليل تلقائي لبيانات السنتر اليوم</p>
         </div>
-        <div className="p-3 bg-gold/10 rounded-full flex items-center gap-3">
-            <span className="text-xs font-black text-gold">({alerts.length}) تنبيه</span>
-            <Bell className="w-8 h-8 text-gold" />
-        </div>
+        <Button variant="outline" className="gap-2 font-black border-primary text-primary h-11" onClick={markAllAsRead}>
+          <Check className="w-4 h-4" /> تحديد الكل كمقروء
+        </Button>
       </div>
 
-      <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-        {[{id:'all', n:'الكل'}, {id:'session', n:'الجلسات'}, {id:'payment', n:'المستحقات'}, {id:'case', n:'القضايا'}].map(t => (
-          <button 
-            key={t.id} 
-            onClick={() => setFilter(t.id)} 
-            className={`px-6 py-2 rounded-xl text-xs font-bold border-2 transition-all whitespace-nowrap ${filter === t.id ? 'bg-gold text-white border-gold shadow-md' : 'bg-white hover:border-gold'}`}
-          >
-            {t.n}
-          </button>
-        ))}
-      </div>
-
-      <div className="grid gap-3">
-        {filtered.length > 0 ? filtered.map((alert) => (
-          <div key={alert.id} className={`bg-white rounded-xl p-5 border-r-[6px] shadow-sm flex items-start gap-4 hover:shadow-md transition-all ${alert.priority === 'high' ? 'border-r-red-600' : 'border-r-amber-500'}`}>
-            <div className={`p-3 rounded-lg ${alert.type === 'session' ? 'bg-blue-100 text-blue-600' : alert.type === 'payment' ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-600'}`}>
-              {alert.type === 'session' ? <Calendar className="w-6 h-6" /> : alert.type === 'payment' ? <DollarSign className="w-6 h-6" /> : <AlertTriangle className="w-6 h-6" />}
-            </div>
-            <div className="flex-1">
-              <div className="flex justify-between items-start">
-                <div>
-                  <h3 className="font-bold text-base text-navy-dark">{alert.title}</h3>
-                  <p className="text-sm text-slate-600 mt-1 font-medium leading-relaxed">{alert.description}</p>
-                </div>
-                <button onClick={() => {setAlerts(alerts.filter(a => a.id !== alert.id)); toast.success('تم إخفاء التنبيه');}} className="text-slate-300 hover:text-red-500 transition-colors">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-              {alert.date && (
-                <div className="mt-4 flex items-center gap-4">
-                  <span className="flex items-center gap-1.5 bg-slate-100 px-3 py-1 rounded-md text-[11px] font-bold text-navy-dark border">
-                    <Clock className="w-3.5 h-3.5 text-gold" /> {alert.date}
-                  </span>
-                  {alert.time && (
-                    <span className="text-[11px] font-bold text-gold bg-gold/5 px-3 py-1 rounded-md border border-gold/10">
-                      الساعة: {alert.time}
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        )) : (
-          <div className="text-center py-24 bg-white rounded-3xl border-4 border-dashed border-slate-100">
-            <Bell className="w-16 h-16 mx-auto mb-4 text-slate-200 opacity-20" />
-            <p className="text-slate-400 font-bold">كل شيء تمام! لا توجد تنبيهات معلقة</p>
+      <div className="space-y-3">
+        {alerts.length === 0 && (
+          <div className="text-center py-20 bg-muted/20 rounded-[2rem] border border-dashed">
+            <p className="text-muted-foreground font-bold">لا توجد تنبيهات حالياً.. كل شيء مستقر ✅</p>
           </div>
         )}
+        {alerts.map((alert) => {
+          const Icon = iconMap[alert.type];
+          return (
+            <Card key={alert.id} className={cn("border-none shadow-sm transition-all rounded-2xl overflow-hidden", priorityColors[alert.priority], alert.read && "opacity-60 grayscale-[0.5]")}>
+              <CardContent className="flex items-center gap-4 py-4 px-6">
+                <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm", 
+                  alert.priority === "high" ? "bg-destructive text-white" : 
+                  alert.priority === "medium" ? "bg-warning text-white" : "bg-blue-500 text-white")}>
+                  <Icon className="w-6 h-6" />
+                </div>
+
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-black text-slate-800 text-md">{alert.title}</h3>
+                    {!alert.read && <Badge className="bg-primary text-[9px] h-4">جديد</Badge>}
+                  </div>
+                  <p className="text-sm font-bold text-muted-foreground mt-0.5">{alert.message}</p>
+                  <div className="flex items-center gap-1 text-[10px] text-muted-foreground mt-2 font-black uppercase tracking-tighter">
+                    <Calendar className="w-3 h-3" /> {alert.time}
+                  </div>
+                </div>
+
+                <Button variant="ghost" size="sm" className="font-black text-primary hover:bg-primary/5" onClick={() => markAsRead(alert.id)} disabled={alert.read}>
+                  {alert.read ? "تم الاطلاع" : "مشاهدة"}
+                </Button>
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
     </div>
   );

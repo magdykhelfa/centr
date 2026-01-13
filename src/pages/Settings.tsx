@@ -1,133 +1,157 @@
-import { useState, useEffect, useCallback } from 'react'; import { Settings as SetIcon, Building2, Bell, Database, Save, Download, Upload, Clock, Wifi, WifiOff } from 'lucide-react'; import { toast } from 'sonner';
+import { useState, useEffect } from 'react'; 
+import { Settings as SetIcon, Building2, ShieldCheck, Trash2, UserPlus, Database, Save, Download, Upload, GraduationCap } from 'lucide-react'; 
+import { toast } from 'sonner';
+import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)); }
 
 export default function Settings() {
-  // القاعدة الذهبية: الـ IP المركزي لسحب الإعدادات وتوحيدها
-  const currentIp = localStorage.getItem('server_ip') || '192.168.1.5';
-  const BASE_URL = `http://${currentIp}:3000`;
-  
-  const [s, setS] = useState<any>({ name: 'المكتب', owner: 'المدير', n: { s: true, f: true, days: 1 } });
-  const [isNet, setIsNet] = useState(false);
+  const [s, setS] = useState<any>({ name: 'سنتر التفوق التعليمي', owner: 'م/ مجدي خلفه', users: [] });
+  const [newUser, setNewUser] = useState({ 
+    name: '', user: '', password: '', role: 'staff',
+    permissions: { students: true, finance: false, settings: false, groups: true } 
+  });
 
-  // وظيفة المزامنة لجلب الإعدادات الموحدة من السيرفر
-  const syncSettings = useCallback(async (dataToPost?: any) => {
-    try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 2000);
-      
-      if (dataToPost) {
-        await fetch(`${BASE_URL}/update`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...JSON.parse(localStorage.getItem('full_db') || '{}'), settings: dataToPost })
-        });
-      }
+  useEffect(() => {
+    const localS = localStorage.getItem('office_settings');
+    const localU = localStorage.getItem('edu_users');
+    if (localS) {
+      const parsed = JSON.parse(localS);
+      parsed.users = localU ? JSON.parse(localU) : [];
+      setS(parsed);
+    }
+  }, []);
 
-      const res = await fetch(`${BASE_URL}/sync`, { signal: ctrl.signal });
-      clearTimeout(t);
-      if (res.ok) {
-        const full = await res.json();
-        const serverSettings = full.settings || s;
-        setS(serverSettings);
-        localStorage.setItem('office_settings', JSON.stringify(serverSettings));
-        localStorage.setItem('full_db', JSON.stringify(full));
-        setIsNet(true);
-      }
-    } catch { setIsNet(false); }
-  }, [BASE_URL]);
-
-  useEffect(() => { syncSettings(); }, [syncSettings]);
-
-  const save = async (e: any) => {
-    e.preventDefault();
-    localStorage.setItem('office_settings', JSON.stringify(s));
-    await syncSettings(s); // حفظ للسيرفر فوراً
-    toast.success('تم حفظ الإعدادات ومزامنتها مع الشبكة');
+  const saveAll = () => {
+    localStorage.setItem('office_settings', JSON.stringify({ name: s.name, owner: s.owner }));
+    localStorage.setItem('edu_users', JSON.stringify(s.users || []));
+    toast.success('تم الحفظ بنجاح');
+    setTimeout(() => window.location.reload(), 500);
   };
 
-  const exp = () => {
-    const fullData = JSON.parse(localStorage.getItem('full_db') || '{}');
-    const b = new Blob([JSON.stringify(fullData)], { type: 'application/json' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `Lawyer_Backup_${new Date().toISOString().split('T')[0]}.json`; a.click();
-    toast.success('تم تصدير نسخة شاملة من القاعدة المركزية');
-  };
-
-  const imp = (e: any) => {
-    const f = e.target.files[0]; if (!f) return;
-    const r = new FileReader();
-    r.onload = async (ev: any) => {
-      try {
-        const d = JSON.parse(ev.target.result);
-        localStorage.setItem('full_db', JSON.stringify(d));
-        // توزيع البيانات على المخازن المحلية
-        if (d.cases) localStorage.setItem('lawyer_cases', JSON.stringify(d.cases));
-        if (d.clients) localStorage.setItem('lawyer_clients', JSON.stringify(d.clients));
-        if (d.finance) localStorage.setItem('lawyer_transactions', JSON.stringify(d.finance));
-        if (d.settings) { localStorage.setItem('office_settings', JSON.stringify(d.settings)); setS(d.settings); }
-        
-        await syncSettings(d.settings); // رفع النسخة المستعادة للسيرفر
-        toast.success('تمت استعادة القاعدة بالكامل');
-        setTimeout(() => window.location.reload(), 800);
-      } catch { toast.error('ملف غير صالح'); }
+  const addUser = () => {
+    if (!newUser.user || !newUser.password) return toast.error('برجاء كتابة اسم المستخدم وكلمة المرور');
+    const userToAdd = {
+      ...newUser,
+      id: Date.now(),
+      permissions: newUser.role === 'admin' 
+        ? { students: true, finance: true, settings: true, groups: true } 
+        : newUser.permissions
     };
-    r.readAsText(f);
+    setS({ ...s, users: [...(s.users || []), userToAdd] });
+    setNewUser({ name: '', user: '', password: '', role: 'staff', permissions: { students: true, finance: false, settings: false, groups: true } });
+    toast.info('تمت الإضافة.. اضغط حفظ للتفعيل');
+  };
+
+  const togglePerm = (key: string) => {
+    setNewUser({
+      ...newUser,
+      permissions: { ...newUser.permissions, [key]: !(newUser.permissions as any)[key] }
+    });
+  };
+
+  const exportBackup = () => {
+    const data = {
+      settings: s, users: s.users,
+      students: JSON.parse(localStorage.getItem('students-data') || '[]'),
+      groups: JSON.parse(localStorage.getItem('groups-data') || '[]')
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `Backup_Center_${new Date().toLocaleDateString('en-CA')}.json`;
+    a.click();
+  };
+
+  const importBackup = (e: any) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event: any) => {
+      try {
+        const data = JSON.parse(event.target.result);
+        if (data.users) localStorage.setItem('edu_users', JSON.stringify(data.users));
+        if (data.students) localStorage.setItem('students-data', JSON.stringify(data.students));
+        toast.success('تم استعادة البيانات');
+        setTimeout(() => window.location.reload(), 1000);
+      } catch (err) { toast.error('ملف غير صالح'); }
+    };
+    reader.readAsText(file);
   };
 
   return (
-    <div className="p-4 space-y-6 text-right font-arabic" dir="rtl">
-      <div className="flex justify-between items-center bg-white p-6 rounded-2xl border shadow-sm">
-        <div>
-          <h1 className="text-2xl font-black text-slate-800 flex items-center gap-2">
-            إعدادات النظام {isNet ? <Wifi className="w-5 h-5 text-green-500 animate-pulse" /> : <WifiOff className="w-5 h-5 text-slate-300" />}
-          </h1>
-          <p className="text-xs text-slate-400 font-bold">
-            {isNet ? `التحكم المركزي مفعل: ${currentIp}` : 'تعديل الإعدادات المحلية فقط'}
-          </p>
+    <div className="p-4 space-y-4 text-right font-cairo animate-in fade-in duration-500" dir="rtl">
+      {/* Header المصغر */}
+      <div className="bg-white px-6 py-4 rounded-3xl shadow-sm border-r-4 border-primary flex justify-between items-center">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary"><SetIcon className="w-5 h-5" /></div>
+          <div>
+            <h1 className="text-lg font-black text-slate-800">إعدادات الأمان</h1>
+            <p className="text-[10px] text-slate-400 font-bold">إدارة الهوية والمستخدمين</p>
+          </div>
         </div>
-        <div className="p-3 bg-slate-50 rounded-full border border-slate-100 shadow-inner">
-          <SetIcon className={`w-8 h-8 ${isNet ? 'text-amber-500 animate-[spin_4s_linear_infinite]' : 'text-slate-300'}`} />
-        </div>
+        <button onClick={saveAll} className="bg-primary text-white px-6 py-2 rounded-xl font-black text-xs flex items-center gap-2 hover:bg-slate-800 border-none cursor-pointer transition-all shadow-md shadow-primary/20"><Save className="w-4 h-4" /> حفظ التغييرات</button>
       </div>
 
-      <form onSubmit={save} className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 space-y-6">
-          <div className="bg-white p-6 rounded-xl border-2 border-slate-50 space-y-4 shadow-sm hover:border-amber-100 transition-colors">
-            <h2 className="font-bold text-lg flex items-center gap-2 border-b pb-3 text-slate-700"><Building2 className="w-5 h-5 text-amber-500" /> الهوية والبيانات الرسمية</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
-              <div className="space-y-1.5"><label className="text-xs font-black text-slate-500 mr-1">اسم مكتب المحاماة</label><input className="w-full p-3 border-2 border-slate-100 rounded-xl text-sm font-bold outline-none focus:border-amber-500 focus:bg-amber-50/30 transition-all" value={s?.name} onChange={e => setS({...s, name: e.target.value})} /></div>
-              <div className="space-y-1.5"><label className="text-xs font-black text-slate-500 mr-1">المحامي المدير</label><input className="w-full p-3 border-2 border-slate-100 rounded-xl text-sm font-bold outline-none focus:border-amber-500 focus:bg-amber-50/30 transition-all" value={s?.owner} onChange={e => setS({...s, owner: e.target.value})} /></div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2 space-y-4">
+          <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
+            <h2 className="font-black text-sm flex items-center gap-2 mb-4 text-slate-600"><Building2 className="w-4 h-4 text-primary" /> بيانات السنتر</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 mr-2">اسم السنتر</label><input className="w-full p-3 bg-slate-50 border-none rounded-xl text-xs font-bold outline-none focus:ring-1 ring-primary/30" value={s?.name} onChange={e => setS({...s, name: e.target.value})} /></div>
+              <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 mr-2">المدير العام</label><input className="w-full p-3 bg-slate-50 border-none rounded-xl text-xs font-bold outline-none focus:ring-1 ring-primary/30" value={s?.owner} onChange={e => setS({...s, owner: e.target.value})} /></div>
             </div>
           </div>
 
-          <div className="bg-white p-6 rounded-xl border-2 border-slate-50 space-y-4 shadow-sm">
-            <h2 className="font-bold text-lg flex items-center gap-2 border-b pb-3 text-slate-700"><Bell className="w-5 h-5 text-amber-500" /> محرك التنبيهات المسبقة</h2>
-            <div className="space-y-4">
-              <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                <div className="flex items-center gap-3"><div className="bg-white p-2 rounded-lg shadow-sm"><Clock className="w-5 h-5 text-amber-600" /></div><span className="text-sm font-black text-slate-700">تنبيهي قبل موعد الجلسة بـ :</span></div>
-                <select className="p-2.5 border-2 border-white rounded-xl text-xs font-black outline-none bg-white shadow-sm cursor-pointer" value={s?.n?.days} onChange={e => setS({...s, n: {...s.n, days: parseInt(e.target.value)}})}>
-                  <option value="1">يوم واحد (افتراضي)</option><option value="2">يومين</option><option value="3">3 أيام</option><option value="7">أسبوع كامل</option>
+          <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
+            <h2 className="font-black text-sm flex items-center gap-2 mb-4 text-slate-600"><UserPlus className="w-4 h-4 text-primary" /> إدارة الحسابات</h2>
+            <div className="bg-slate-50 p-4 rounded-2xl mb-4 space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <input placeholder="اسم الشخص" className="p-2.5 rounded-lg border-none text-[11px] font-bold" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})} />
+                <select className="p-2.5 rounded-lg border-none text-[11px] font-bold outline-none cursor-pointer" value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value})}>
+                   <option value="staff">مساعد (صلاحيات محدودة)</option>
+                   <option value="admin">مدير (صلاحيات كاملة)</option>
                 </select>
+                <input placeholder="اليوزر" className="p-2.5 rounded-lg border-none text-[11px] font-bold" value={newUser.user} onChange={e => setNewUser({...newUser, user: e.target.value})} />
+                <input type="password" placeholder="الباسورد" className="p-2.5 rounded-lg border-none text-[11px] font-bold" value={newUser.password} onChange={e => setNewUser({...newUser, password: e.target.value})} />
               </div>
-              <div className="flex justify-between items-center p-4 rounded-2xl hover:bg-slate-50 transition-all cursor-pointer border border-transparent hover:border-slate-100">
-                <div className="space-y-0.5"><p className="text-sm font-black text-slate-700">الإشعارات الذكية</p><p className="text-[10px] text-slate-400 font-bold">تفعيل تنبيهات المستحقات المالية والجلسات في لوحة التحكم</p></div>
-                <div className="relative inline-flex items-center cursor-pointer">
-                  <input type="checkbox" className="w-6 h-6 accent-amber-500 rounded-lg cursor-pointer" checked={s?.n?.s} onChange={e => setS({...s, n: {...s.n, s: e.target.checked}})} />
+              
+              {newUser.role === 'staff' && (
+                <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-200 justify-center">
+                  <p className="w-full text-center text-[10px] font-black text-slate-400 mb-1">صلاحيات المساعد:</p>
+                  {Object.keys(newUser.permissions).map((p) => (
+                    <button key={p} onClick={() => togglePerm(p)} className={cn("px-4 py-1.5 rounded-full text-[10px] font-black border-2 transition-all cursor-pointer", (newUser.permissions as any)[p] ? "bg-primary border-primary text-white" : "bg-white border-slate-200 text-slate-400")}>
+                      {p === 'students' ? 'الطلاب' : p === 'finance' ? 'الحسابات' : p === 'settings' ? 'الإعدادات' : 'المجموعات'}
+                    </button>
+                  ))}
                 </div>
-              </div>
+              )}
+              <button onClick={addUser} className="w-full bg-slate-800 text-white py-2.5 rounded-lg font-black text-[11px] border-none cursor-pointer hover:bg-primary transition-all">إضافة الحساب</button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {s.users?.map((u: any) => (
+                <div key={u.id} className="p-3 bg-slate-50/50 border border-slate-100 rounded-2xl flex justify-between items-center group">
+                  <div className="flex items-center gap-3">
+                    <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center", u.role === 'admin' ? "bg-amber-100 text-amber-600" : "bg-blue-100 text-blue-600")}><ShieldCheck className="w-4 h-4" /></div>
+                    <div><p className="text-xs font-black text-slate-800">{u.name}</p><p className="text-[9px] text-slate-400 font-bold">{u.role === 'admin' ? 'مدير عام' : 'مساعد'}</p></div>
+                  </div>
+                  <button onClick={() => setS({...s, users: s.users.filter((x:any) => x.id !== u.id)})} className="p-2 text-slate-300 hover:text-red-500 border-none bg-transparent cursor-pointer"><Trash2 className="w-4 h-4" /></button>
+                </div>
+              ))}
             </div>
           </div>
         </div>
 
-        <div className="space-y-6">
-          <div className="bg-slate-900 text-white p-6 rounded-3xl space-y-5 shadow-2xl border-b-[6px] border-amber-500 relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-20 h-20 bg-amber-500/10 rounded-full -translate-x-10 -translate-y-10"></div>
-            <div className="flex items-center gap-2 border-b border-white/10 pb-4 relative"><Database className="w-5 h-5 text-amber-500" /> <h2 className="font-black text-sm">مركز البيانات السحابي</h2></div>
-            <p className="text-[10px] text-slate-400 font-bold leading-relaxed">يمكنك تصدير النسخة الاحتياطية الشاملة أو استعادتها وتعميمها على جميع أجهزة المكتب المرتبطة بالـ IP.</p>
-            <button type="button" onClick={exp} className="w-full py-3.5 bg-amber-500 text-slate-950 rounded-2xl font-black text-xs flex items-center justify-center gap-2 hover:bg-amber-400 active:scale-95 transition-all shadow-lg"><Download className="w-4 h-4" /> تصدير القاعدة الكاملة</button>
-            <label className="w-full py-3.5 bg-white/5 border-2 border-white/10 border-dashed rounded-2xl font-bold text-xs flex items-center justify-center gap-2 cursor-pointer hover:bg-white/10 transition-all"><Upload className="w-4 h-4 text-amber-500" /> استعادة قاعدة بيانات <input type="file" className="hidden" accept=".json" onChange={imp} /></label>
+        <div className="space-y-4">
+          <div className="bg-slate-900 text-white p-6 rounded-3xl shadow-lg space-y-3">
+            <h2 className="font-black text-xs border-b border-white/10 pb-3 flex items-center gap-2"><Database className="w-4 h-4 text-primary" /> النسخ الاحتياطي</h2>
+            <button onClick={exportBackup} className="w-full py-3 bg-primary text-white rounded-xl font-black text-[11px] flex items-center justify-center gap-2 border-none cursor-pointer transition-all"><Download className="w-4 h-4" /> حفظ نسخة</button>
+            <label className="w-full py-3 bg-white/5 border border-white/10 border-dashed rounded-xl font-black text-[11px] flex items-center justify-center gap-2 cursor-pointer hover:bg-white/10 transition-all"><Upload className="w-4 h-4 text-primary" /> استعادة <input type="file" className="hidden" accept=".json" onChange={importBackup} /></label>
           </div>
-          <button type="submit" className="w-full bg-slate-800 text-white py-5 rounded-3xl font-black shadow-xl hover:bg-slate-700 active:scale-[0.98] transition-all flex items-center justify-center gap-3 border-b-4 border-slate-950"><Save className="w-6 h-6 text-amber-500" /> اعتماد وحفظ التغييرات</button>
         </div>
-      </form>
+      </div>
     </div>
   );
 }

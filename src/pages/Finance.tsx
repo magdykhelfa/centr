@@ -1,88 +1,133 @@
-import { useState, useMemo, useEffect, useCallback } from 'react'; import { Plus, Search, TrendingUp, TrendingDown, DollarSign, CreditCard, Trash2, Edit2, MoreVertical, Wifi, WifiOff } from 'lucide-react'; import AddTransactionDialog from '@/components/dialogs/AddTransactionDialog'; import { toast } from 'sonner'; import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { useState, useEffect } from "react";
+import { Wallet, TrendingUp, TrendingDown, CreditCard, Plus, Filter, Edit, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+
+type TransactionType = "income" | "expense";
+type TransactionStatus = "completed" | "partial";
+type Transaction = { id: number; type: TransactionType; amount: number; date: string; status: TransactionStatus; student?: string; method?: string; description?: string; category?: string; groupId?: string; };
 
 export default function Finance() {
-  // القاعدة الأولى: لقط الـ IP اللي متسيف في "خزنة" العملاء فوراً
-  const currentIp = localStorage.getItem('server_ip') || '192.168.1.5';
-  const BASE_URL = `http://${currentIp}:3000`;
+  // جلب البيانات مع دعم أكتر من مسمى للـ LocalStorage لضمان المزامنة
+  const [allStudents] = useState(() => { const data = localStorage.getItem("students-data") || localStorage.getItem("students") || "[]"; return JSON.parse(data); });
+  const [groups] = useState(() => { const data = localStorage.getItem("groups-data") || localStorage.getItem("groups") || "[]"; return JSON.parse(data); });
+  const [transactions, setTransactions] = useState<Transaction[]>(() => JSON.parse(localStorage.getItem("finance-transactions") || "[]"));
+  const [openDialog, setOpenDialog] = useState(false);
+  const [editId, setEditId] = useState<number | null>(null);
+  const [filteredStudents, setFilteredStudents] = useState<any[]>([]);
+  const [form, setForm] = useState<Omit<Transaction, "id">>({ type: "income", amount: 0, date: new Date().toISOString().split('T')[0], status: "completed", student: "", method: "نقدي", description: "", category: "", groupId: "" });
 
-  const [isAddOpen, setIsAddOpen] = useState(false); const [editingTransaction, setEditingTransaction] = useState<any>(null); const [searchTerm, setSearchTerm] = useState(''); const [isNet, setIsNet] = useState(false);
-  const [transactions, setTransactions] = useState(() => { const saved = localStorage.getItem('lawyer_transactions'); return saved ? JSON.parse(saved) : []; });
+  // تحديث البيانات لحظياً في الداشبورد
+  useEffect(() => { localStorage.setItem("finance-transactions", JSON.stringify(transactions)); window.dispatchEvent(new Event("storage")); }, [transactions]);
 
-  const syncFinance = useCallback(async (dataToPost?: any) => { 
-    try { 
-      const ctrl = new AbortController(); 
-      const t = setTimeout(() => ctrl.abort(), 1500); 
-      if (dataToPost) { 
-        // الربط باستخدام BASE_URL اللي واخد الـ IP التلقائي
-        await fetch(`${BASE_URL}/update`, { 
-          method: 'POST', 
-          headers: { 'Content-Type': 'application/json' }, 
-          body: JSON.stringify({ ...JSON.parse(localStorage.getItem('full_db') || '{}'), finance: dataToPost }) 
-        }); 
-      } 
-      const res = await fetch(`${BASE_URL}/sync`, { signal: ctrl.signal }); 
-      clearTimeout(t); 
-      if (res.ok) { 
-        const full = await res.json(); 
-        setTransactions(full.finance || []); 
-        localStorage.setItem('lawyer_transactions', JSON.stringify(full.finance || [])); 
-        localStorage.setItem('full_db', JSON.stringify(full)); 
-        setIsNet(true); 
-      } 
-    } catch (e) { 
-      setIsNet(false); 
-    } 
-  }, [BASE_URL]);
+  const totalIncome = transactions.filter((t) => t.type === "income").reduce((acc, t) => acc + t.amount, 0);
+  const totalExpenses = transactions.filter((t) => t.type === "expense").reduce((acc, t) => acc + t.amount, 0);
+  const totalPending = transactions.filter(t => t.status === "partial").reduce((acc, t) => acc + t.amount, 0);
 
-  useEffect(() => { syncFinance(); const interval = setInterval(() => syncFinance(), 10000); return () => clearInterval(interval); }, [syncFinance]);
-
-  const handleAddOrUpdate = async (data: any) => { let newList; if (editingTransaction) { newList = transactions.map((t: any) => t.id === editingTransaction.id ? { ...data, id: t.id } : t); toast.success('تم التحديث'); } else { newList = [{ ...data, id: Date.now() }, ...transactions]; toast.success('تمت الإضافة'); } setTransactions(newList); localStorage.setItem('lawyer_transactions', JSON.stringify(newList)); await syncFinance(newList); setEditingTransaction(null); setIsAddOpen(false); };
-
-  const deleteTransaction = async (id: number) => { if (confirm('هل تريد حذف المعاملة؟')) { const newList = transactions.filter((t: any) => t.id !== id); setTransactions(newList); localStorage.setItem('lawyer_transactions', JSON.stringify(newList)); await syncFinance(newList); toast.error('تم الحذف'); } };
-
-  const stats = useMemo(() => { const income = transactions.filter((t: any) => t.type === 'income').reduce((acc: number, curr: any) => acc + (Number(curr.amount) || 0), 0); const expenses = transactions.filter((t: any) => t.type === 'expense').reduce((acc: number, curr: any) => acc + (Number(curr.amount) || 0), 0); const totalReceivables = transactions.filter((t: any) => t.type === 'income').reduce((acc: number, curr: any) => acc + (Number(curr.remaining) || 0), 0); return { income, expenses, net: income - expenses, receivables: totalReceivables }; }, [transactions]);
-
-  const filteredTransactions = transactions.filter((t: any) => (t.description || '').includes(searchTerm) || (t.caseName || '').includes(searchTerm));
+  const handleSave = () => { if (editId) { setTransactions((prev) => prev.map((t) => (t.id === editId ? { ...form, id: editId } as Transaction : t))); } else { setTransactions((prev) => [...prev, { ...form, id: Date.now() } as Transaction]); } setOpenDialog(false); };
+  
+  // دالة البحث عن الطلاب جوه المجموعة المختارة
+  const filterStudentsByGroup = (groupIdOrName: string) => {
+    const selectedGroup = groups.find((g: any) => String(g.id) === groupIdOrName || g.name === groupIdOrName);
+    const result = allStudents.filter((s: any) => String(s.groupId) === String(groupIdOrName) || String(s.group) === String(groupIdOrName) || (selectedGroup && (s.groupId === selectedGroup.name || s.group === selectedGroup.name)));
+    setFilteredStudents(result);
+  };
 
   return (
-    <div className="space-y-6 text-right" dir="rtl">
-      <div className="page-header flex justify-between items-center bg-card p-4 rounded-xl border border-border/50 shadow-sm">
-        <div>
-          <h1 className="page-title text-2xl font-bold font-arabic flex items-center gap-2">
-            الإدارة المالية {isNet ? <Wifi className="w-5 h-5 text-success animate-pulse" /> : <WifiOff className="w-5 h-5 text-muted-foreground" />}
-          </h1>
-          <p className="text-[11px] text-muted-foreground mt-0.5">
-            {isNet ? `متصل بالخزينة الرئيسية: ${currentIp}` : 'شغال محلي - تأكد من ربط IP العملاء'}
-          </p>
-        </div>
-        <button onClick={() => { setEditingTransaction(null); setIsAddOpen(true); }} className="btn-gold px-6 py-2 rounded-lg flex items-center gap-2 text-base font-bold transition-transform hover:scale-105 active:scale-95 shadow-lg"><Plus className="w-5 h-5" /> معاملة جديدة</button>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div><h1 className="text-2xl font-bold">الحسابات المالية</h1><p className="text-muted-foreground text-sm">إدارة الإيرادات والمصروفات</p></div>
+        <Dialog open={openDialog} onOpenChange={setOpenDialog}>
+          <DialogTrigger asChild><Button className="gap-2" onClick={() => {setEditId(null); setForm({type: "income", amount: 0, date: new Date().toISOString().split('T')[0], status: "completed", student: "", method: "نقدي", description: "", category: "", groupId: ""}); setFilteredStudents([]); setOpenDialog(true);}}><Plus className="w-4 h-4" /> تسجيل معاملة</Button></DialogTrigger>
+          <DialogContent className="max-w-md text-right" dir="rtl">
+            <DialogHeader><DialogTitle>{editId ? "تعديل معاملة" : "تسجيل معاملة جديدة"}</DialogTitle></DialogHeader>
+            <div className="space-y-4 pt-2">
+              <div><Label>نوع المعاملة</Label><Select value={form.type} onValueChange={(v: any) => setForm({ ...form, type: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="income">إيراد</SelectItem><SelectItem value="expense">مصروف</SelectItem></SelectContent></Select></div>
+              <div><Label>المبلغ</Label><Input type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: +e.target.value })} /></div>
+              {form.type === "income" && (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div><Label>المجموعة</Label><Select onValueChange={(v) => { setForm({...form, groupId: v}); filterStudentsByGroup(v); }}><SelectTrigger><SelectValue placeholder="اختر المجموعة" /></SelectTrigger><SelectContent>{groups.map((g: any) => <SelectItem key={g.id} value={String(g.id)}>{g.name}</SelectItem>)}</SelectContent></Select></div>
+                    <div><Label>الطالب</Label><Select onValueChange={(v) => setForm({...form, student: v})}><SelectTrigger><SelectValue placeholder={filteredStudents.length > 0 ? "اختر الطالب" : "لا يوجد طلاب"} /></SelectTrigger><SelectContent>{filteredStudents.map((s: any) => <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>)}</SelectContent></Select></div>
+                  </div>
+                </>
+              )}
+              {form.type === "expense" && ( <div><Label>الوصف / البيان</Label><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="مثال: إيجار القاعة" /></div> )}
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label>الحالة</Label><Select value={form.status} onValueChange={(v: any) => setForm({ ...form, status: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="completed">مكتمل</SelectItem><SelectItem value="partial">متأخرات (جزئي)</SelectItem></SelectContent></Select></div>
+                <div><Label>التاريخ</Label><Input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></div>
+              </div>
+              <div className="flex justify-end gap-2 pt-2"><Button variant="outline" onClick={() => setOpenDialog(false)}>إلغاء</Button><Button onClick={handleSave}>حفظ المعاملة</Button></div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
+
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="stat-card bg-gradient-to-br from-success to-emerald-400 text-white p-5 rounded-xl shadow-md flex items-center justify-between transition-all duration-300 hover:shadow-lg hover:-translate-y-1"><div><p className="text-sm opacity-90 font-bold">إجمالي المحصل</p><p className="text-2xl font-black mt-1 font-mono tabular-nums">{stats.income.toLocaleString()}</p></div><div className="p-3 bg-white/20 rounded-lg"><TrendingUp className="w-8 h-8" /></div></div>
-        <div className="stat-card bg-gradient-to-br from-destructive to-red-400 text-white p-5 rounded-xl shadow-md flex items-center justify-between transition-all duration-300 hover:shadow-lg hover:-translate-y-1"><div><p className="text-sm opacity-90 font-bold">إجمالي المصروفات</p><p className="text-2xl font-black mt-1 font-mono tabular-nums">{stats.expenses.toLocaleString()}</p></div><div className="p-3 bg-white/20 rounded-lg"><TrendingDown className="w-8 h-8" /></div></div>
-        <div className="stat-card bg-gradient-to-br from-gold to-gold-light text-navy-dark p-5 rounded-xl shadow-md flex items-center justify-between transition-all duration-300 hover:shadow-lg hover:-translate-y-1 border border-gold/20"><div><p className="text-sm opacity-90 font-bold">صافي الربح</p><p className="text-2xl font-black mt-1 font-mono tabular-nums">{stats.net.toLocaleString()}</p></div><div className="p-3 bg-white/30 rounded-lg"><DollarSign className="w-8 h-8" /></div></div>
-        <div className="stat-card bg-primary text-white p-5 rounded-xl shadow-md flex items-center justify-between transition-all duration-300 hover:shadow-lg hover:-translate-y-1 border-r-8 border-gold"><div><p className="text-sm opacity-90 font-bold text-gold">المستحقات</p><p className="text-2xl font-black mt-1 font-mono tabular-nums text-gold">{stats.receivables.toLocaleString()}</p></div><div className="p-3 bg-white/20 rounded-lg"><CreditCard className="w-8 h-8" /></div></div>
+        <Stat title="إجمالي الإيرادات" value={`${totalIncome.toLocaleString()} ج.م`} icon={<TrendingUp />} variant="primary" />
+        <Stat title="إجمالي المصروفات" value={`${totalExpenses.toLocaleString()} ج.م`} icon={<TrendingDown />} variant="secondary" />
+        <Stat title="صافي الربح" value={`${(totalIncome - totalExpenses).toLocaleString()} ج.م`} icon={<Wallet />} variant="success" />
+        <Stat title="المتأخرات" value={`${totalPending.toLocaleString()} ج.م`} icon={<CreditCard />} variant="warning" />
       </div>
-      <div className="bg-card rounded-xl shadow-sm overflow-hidden border border-border">
-        <div className="p-4 border-b flex items-center justify-between bg-muted/5"><h3 className="text-lg font-bold">سجل العمليات المالية</h3><div className="relative"><Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" /><input type="text" placeholder="بحث..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="input-field pr-9 py-1.5 text-sm w-64 border transition-all focus:ring-2 focus:ring-gold/20" /></div></div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-right">
-            <thead><tr className="bg-muted/30 text-xs text-muted-foreground font-bold border-b"><th className="px-4 py-3">التاريخ</th><th className="px-4 py-3">البيان / القضية</th><th className="px-4 py-3">المبلغ التفصيلي</th><th className="px-4 py-3 text-center">إجراءات</th></tr></thead>
-            <tbody className="divide-y divide-border">
-              {filteredTransactions.map((tx: any) => (
-                <tr key={tx.id} className="hover:bg-muted/10 transition-colors">
-                  <td className="px-4 py-2.5 text-sm font-medium font-mono">{tx.date}</td>
-                  <td className="px-4 py-2.5"><div className="flex flex-col"><span className="text-sm font-bold text-foreground leading-tight">{tx.caseName || 'معاملة عامة'}</span><span className="text-[11px] text-muted-foreground mt-0.5">{tx.description || ''}</span></div></td>
-                  <td className="px-4 py-2.5"><div className="flex flex-col"><span className={`font-bold text-base tabular-nums ${tx.type === 'income' ? 'text-success' : 'text-destructive'}`}>{tx.type === 'income' ? '+' : '-'} {Number(tx.amount).toLocaleString()}</span>{tx.type === 'income' && (<div className="flex items-center gap-3 mt-0.5 text-[10px] font-bold opacity-90"><span className="text-blue-600">مدفوع: {Number(tx.downPayment || 0).toLocaleString()}</span><span className="text-orange-600 border-r pr-2 border-border">باقي: {Number(tx.remaining || 0).toLocaleString()}</span></div>)}</div></td>
-                  <td className="px-4 py-2.5"><div className="flex justify-center"><DropdownMenu><DropdownMenuTrigger className="p-1.5 hover:bg-muted rounded-full transition-all hover:rotate-90"><MoreVertical className="w-4 h-4 text-muted-foreground" /></DropdownMenuTrigger><DropdownMenuContent align="end" className="w-36 font-bold text-sm shadow-xl font-arabic"><DropdownMenuItem onClick={() => { setEditingTransaction(tx); setIsAddOpen(true); }} className="cursor-pointer gap-2 py-2.5 transition-colors"><Edit2 className="w-4 h-4 text-primary" /> تعديل البيانات</DropdownMenuItem><DropdownMenuItem onClick={() => deleteTransaction(tx.id)} className="cursor-pointer gap-2 text-destructive py-2.5 transition-colors"><Trash2 className="w-4 h-4" /> حذف السجل</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {filteredTransactions.length === 0 && <div className="p-20 text-center text-muted-foreground font-bold">لا توجد سجلات مالية</div>}
-        </div>
-      </div>
-      <AddTransactionDialog open={isAddOpen} onOpenChange={setIsAddOpen} onAdd={handleAddOrUpdate} initialData={editingTransaction} />
+
+      <Tabs defaultValue="transactions" className="w-full">
+        <TabsList dir="rtl" className="h-10"><TabsTrigger value="transactions">سجل المعاملات</TabsTrigger><TabsTrigger value="pending">المتأخرات المالية</TabsTrigger></TabsList>
+        <TabsContent value="transactions" className="mt-4">
+          <Card><CardContent className="p-0" dir="rtl">
+            <Table>
+              <TableHeader><TableRow className="h-12 bg-muted/30"><TableHead className="text-right">النوع</TableHead><TableHead className="text-right">البيان / الطالب</TableHead><TableHead className="text-right">المبلغ</TableHead><TableHead className="text-right">التاريخ</TableHead><TableHead /></TableRow></TableHeader>
+              <TableBody>
+                {transactions.length === 0 ? <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">لا توجد معاملات مسجلة</TableCell></TableRow> : 
+                transactions.map((t) => (
+                  <TableRow key={t.id} className="h-11 hover:bg-muted/20 border-b">
+                    <TableCell className="py-2"><Badge className={`text-[11px] font-bold ${t.type === "income" ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive"}`}>{t.type === "income" ? "إيراد" : "مصروف"}</Badge></TableCell>
+                    <TableCell className="py-2 font-medium">{t.type === "income" ? t.student : t.description}</TableCell>
+                    <TableCell className={`py-2 font-bold ${t.type === "income" ? "text-success" : "text-destructive"}`}>{t.type === "income" ? "+" : "-"}{t.amount.toLocaleString()}</TableCell>
+                    <TableCell className="py-2 text-xs text-muted-foreground">{t.date}</TableCell>
+                    <TableCell className="py-2 flex justify-end gap-1"><Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => {setEditId(t.id); setForm(t); setOpenDialog(true);}}><Edit className="w-4 h-4" /></Button><Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setTransactions(transactions.filter(i => i.id !== t.id))}><Trash2 className="w-4 h-4 text-destructive" /></Button></TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent></Card>
+        </TabsContent>
+        <TabsContent value="pending" className="mt-4">
+          <Card><CardContent className="p-3 space-y-3">
+            {transactions.filter(t => t.status === "partial").length === 0 ? <p className="text-center py-6 text-muted-foreground text-sm">لا توجد مبالغ متأخرة حالياً</p> :
+            transactions.filter(t => t.status === "partial").map((p) => (
+              <div key={p.id} dir="rtl" className="flex items-center justify-between p-3 rounded-lg bg-muted/40 border-r-4 border-warning">
+                <div className="flex flex-col gap-1">
+                  <span className="font-bold text-sm">{p.student}</span>
+                  <span className="text-[11px] text-muted-foreground">تاريخ الاستحقاق: {p.date}</span>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="text-left"><p className="text-[10px] text-muted-foreground uppercase font-bold">المبلغ</p><p className="font-black text-warning leading-none">{p.amount.toLocaleString()} ج.م</p></div>
+                  <Button size="sm" className="bg-warning hover:bg-warning/90 text-white font-bold h-8" onClick={() => setTransactions(prev => prev.map(t => t.id === p.id ? {...t, status: 'completed'} as Transaction : t))}>تحصيل الآن</Button>
+                </div>
+              </div>
+            ))}
+          </CardContent></Card>
+        </TabsContent>
+      </Tabs>
     </div>
+  );
+}
+
+function Stat({ title, value, icon, variant }: any) {
+  const bg = variant === "primary" ? "gradient-primary text-primary-foreground shadow-primary/20" : variant === "secondary" ? "gradient-secondary text-secondary-foreground shadow-slate-200" : variant === "success" ? "bg-success/10 text-success border border-success/20" : "bg-warning/10 text-warning border border-warning/20";
+  return ( 
+    <Card className={`card-hover ${bg} border-none shadow-md`}>
+      <CardContent className="p-5 flex justify-between items-center">
+        <div><p className="text-sm opacity-80 font-bold">{title}</p><p className="text-2xl font-black mt-1 tracking-tight">{value}</p></div>
+        <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center shadow-inner">{icon}</div>
+      </CardContent>
+    </Card> 
   );
 }
