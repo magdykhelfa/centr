@@ -1,7 +1,12 @@
-import { Navigate } from "react-router-dom";
+import { MainLayout } from '@/components/layout/MainLayout';
+import Dashboard from './Dashboard';
 
 const Index = () => {
-  return <Navigate to="/" replace />;
+  return (
+    <MainLayout>
+      <Dashboard />
+    </MainLayout>
+  );
 };
 
 export default Index;
